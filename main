@@ -1,0 +1,92 @@
+from bs4 import BeautifulSoup
+import requests
+import csv
+import os
+
+base_url = 'https://www.olx.pl/nieruchomosci/mieszkania/wynajem/krakow/?search%5Bdistrict_id%5D=255&search%5Bfilter_enum_furniture%5D%5B0%5D=yes&search%5Bfilter_enum_rooms%5D%5B0%5D=three&page={}'
+page = 1
+
+# Inicjalizacja listy do przechowywania danych
+data = []
+# Set to store unique identifiers for each property
+seen_properties = set()
+
+while True:
+    url = base_url.format(page)
+    html_text = requests.get(url).text
+    soup = BeautifulSoup(html_text, 'lxml')
+    houses = soup.find_all('div', class_='css-1sw7q4x')
+
+    if not houses:
+        print("Brak więcej ofert. Przerywam.")
+        break
+
+    for house in houses:
+        # Sprawdź, czy znaleziono element przed próbą uzyskania tekstu
+        house_name_elem = house.find('h6', class_='css-16v5mdi er34gjf0')
+        house_name = house_name_elem.text.replace(' ', '') if house_name_elem else "N/A"
+
+        house_price_elem = house.find('p', class_='css-10b0gli er34gjf0')
+        house_price_str = house_price_elem.text.replace(' ', '') if house_price_elem else "N/A"
+
+        house_size_elem = house.find('span', class_='css-643j0o')
+        house_size_str = house_size_elem.text.replace(' ', '') if house_size_elem else "N/A"
+
+        house_link_elem = house.find('a', class_='css-1wj3ozd')
+        house_link = house_link_elem['href'] if house_link_elem else "N/A"
+
+        # Extract only numerical part from house_price_str
+        house_price_str_numeric = ''.join(filter(str.isdigit, house_price_str))
+
+        # Check if the string is not empty after extracting numerical part
+        if house_price_str_numeric:
+            house_price = float(house_price_str_numeric)
+        else:
+            house_price = "N/A"
+
+        # Handle "N/A" values for house_size
+        try:
+            house_size = float(house_size_str.replace('m²', '').replace(',', '').replace(' ', ''))
+        except ValueError:
+            house_size = "N/A"
+
+        # Sprawdź, czy wartości są liczbami
+        if not isinstance(house_size, (int, float)):
+            house_size = "N/A"
+            continue  # Przejdź do następnej iteracji pętli, aby uniknąć błędu w obliczeniach
+
+        # Przelicz cenę za metr
+        try:
+            price_per_meter = house_size / house_price
+        except (ZeroDivisionError, ValueError):
+            price_per_meter = "N/A"
+
+        # Unique identifier for each property (here using house_name, you might need to adjust)
+        property_id = house_name
+
+        # Check if property already processed
+        if property_id in seen_properties:
+            continue  # Skip this property, it's a duplicate
+        else:
+            seen_properties.add(property_id)
+
+        # Check if the property is in the desired locations (Krakow Krowodrza and Krakow Bronowice)
+        if "krowodrza" in house_name.lower() or "bronowice" in house_name.lower():
+            # Dodaj dane do listy wraz z linkiem
+            data.append((house_name, house_size_str, house_price_str, price_per_meter, house_link))
+
+    page += 1
+
+# Posortuj dane według ceny za metr kwadratowy
+data.sort(key=lambda x: x[3] if isinstance(x[3], (int, float)) else 0, reverse=True)
+
+# Zapisz dane tylko dla pierwszych 10 ofert do pliku CSV
+top_10_data = data[:10]
+with open('dane_mieszkan_join.csv', 'w', newline='') as csv_file:
+    writer = csv.writer(csv_file)
+    # Dodaj nagłówki do pliku CSV
+    writer.writerow(['Nazwa', 'Rozmiar', 'Cena', 'Cena Za Meter', 'Link'])
+    # Zapisz dane
+    writer.writerows(top_10_data)
+
+print("Dane zostały zapisane do pliku CSV.")
